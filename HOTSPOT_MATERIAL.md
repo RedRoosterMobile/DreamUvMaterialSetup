@@ -21,6 +21,16 @@ Create a reusable panel-texture atlas in Material Maker, map it automatically wi
 
 > The source workflow used Blender 5.0 because DreamUV did not work with Blender 5.1 at the time. Test newer versions before relying on them.
 
+## Included project assets
+
+- `hotspot_uv.png`: 2048×2048 UV layout exported from Blender.
+- `hotspot_grid_nodes.ptex`: Material Maker graph that converts the UV layout into a panel mask.
+- `hotspot_grid_nodes_invert.png`: 2048×2048 panel mask exported from that graph.
+- `devil_metal.ptex` and `devil/`: procedural metal graph and example albedo, normal, ORM, and glTF exports.
+- `metal02_hotspot.ptex` and `metal_02/`: scratched-metal graph and example albedo, normal, ORM, and glTF exports.
+
+The two metal graphs are source-material examples. Neither currently applies `hotspot_grid_nodes_invert.png`; that composition is the remaining atlas-template work.
+
 ## 1. Prepare the source materials
 
 Create or obtain two tileable PBR materials:
@@ -57,10 +67,10 @@ The exported image must clearly show every rectangular panel boundary.
 
 ## 3. Convert the UV layout into a panel mask
 
-Import the UV-layout image into Material Maker and build this node chain:
+This conversion is already captured in `hotspot_grid_nodes.ptex`. It reads `hotspot_uv.png` and uses this node chain:
 
 ```text
-Image → Invert → Tones Step → Dilate/Erode → Invert → panel_mask
+hotspot_uv.png → Image → Invert → Tones Step → Dilate/Erode → Invert → hotspot_grid_nodes_invert.png
 ```
 
 Adjust the nodes as follows:
@@ -77,11 +87,11 @@ The final mask must have:
 - No gray noise away from the separators
 - No broken lines
 
-Export this mask at the same resolution as the material textures.
+The included result is `hotspot_grid_nodes_invert.png` at 2048×2048. Re-export it from `hotspot_grid_nodes.ptex` only when the UV layout or separator settings change, and keep it at the same resolution as the material textures.
 
 ## 4. Add panel detail to the albedo
 
-For each source material:
+For each source material, start from either the `devil/` or `metal_02/` texture set and use `hotspot_grid_nodes_invert.png` as `panel_mask`:
 
 1. Load the source albedo.
 2. Duplicate it through a **Hue/Saturation/Value** node.
@@ -142,6 +152,8 @@ Rules:
 Check the channels before export: `R = AO`, `G = roughness`, `B = metallic`.
 
 ## 7. Export both atlas materials
+
+Do not confuse the existing `devil/` and `metal_02/` files with completed atlas exports: they are unmasked source-material examples.
 
 Export complete Godot 4 ORM texture sets for:
 

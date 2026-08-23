@@ -2,33 +2,37 @@
 
 ## Goal
 
-Let pi turn a structured material request into a known-good Material Maker project and exported PBR texture set.
+Let pi export a material as a PBR texture set and optionally pass that set through one reusable hotspot-conversion `.ptex`.
 
-Example user request:
+Example user requests:
 
 > Make a dark scratched metal texture at 1024×1024.
 
+> Convert this material to the hotspot atlas layout.
+
 Expected output:
 
-- Generated `.ptex` project
+- Generated working `.ptex` project
 - Albedo PNG
 - OpenGL normal PNG
 - ORM PNG (`R = AO`, `G = roughness`, `B = metallic`)
+- When requested, hotspot-atlas versions of those three maps
 
-The first version uses curated `.ptex` templates with allowlisted parameters. Pi interprets natural language; the CLI remains deterministic and structured.
+The first version uses curated source-material `.ptex` templates and one user-provided hotspot converter. Pi interprets natural language; the CLI remains deterministic and structured.
 
 ## MVP scope
 
 ### Included
 
 - macOS and the installed Material Maker 1.7 app
-- One CLI command
-- Curated metal and brick templates
+- One CLI executable with `generate` and `convert-hotspot` subcommands
+- Curated metal templates based on the included examples
 - Friendly parameters defined per template, such as scale, colors, roughness, wear, and seed
 - Resolution selection
 - Godot 4 ORM texture export
 - Output validation
-- Atlas texture export from a supplied hotspot `.ptex` template and panel mask
+- A reusable hotspot-conversion `.ptex` that accepts albedo, OpenGL normal, ORM, and the fixed mask
+- Hotspot-atlas albedo, normal, and ORM export
 
 ### Not included
 
@@ -54,28 +58,38 @@ Add these only after the template workflow proves too limiting.
 ```
 
 ```sh
-./mm-material generate brick \
-  --output ./out/red-brick \
-  --size 2048 \
-  --param brick_color=#8b382d \
-  --param mortar_color=#b8aa91
+./mm-material convert-hotspot \
+  --albedo ./metal/albedo.png \
+  --normal ./metal/normal.png \
+  --orm ./metal/orm.png \
+  --output ./out/hotspot-metal
 ```
+
+`generate ... --hotspot` may later combine these two operations as a convenience, without adding separate conversion logic.
 
 Unsupported template names or parameters fail with a useful message. A `list` command can show available templates and their parameters if needed by pi.
 
 ## Implementation
 
-Use one small Python script and the standard library:
+Use one small Python script and the standard library.
 
-1. Load the selected `.ptex` template as JSON.
-2. Apply only that template's allowlisted friendly parameters to known node/parameter paths.
-3. Set the Material node's `size` parameter from the requested power-of-two resolution.
-4. Save the generated `.ptex` into the output directory.
-5. Run Material Maker with absolute input and output paths.
-6. Verify that albedo, normal, and ORM PNGs exist and have the requested dimensions.
-7. Return the generated file paths as JSON so pi and a future MCP wrapper can consume them.
+For a normal material export:
 
-Keep template mappings in the script until their number makes that awkward. Do not build a generic Material Maker schema or graph editor for the MVP.
+1. Load the selected source-material `.ptex` as JSON.
+2. Apply only that template's allowlisted friendly parameters.
+3. Set the Material node's `size` parameter.
+4. Save a working `.ptex` and export it with Material Maker.
+
+For hotspot conversion:
+
+1. Copy the supplied hotspot-conversion `.ptex` into a working directory.
+2. Patch its four Image nodes to absolute paths for the source albedo, OpenGL normal, ORM, and `hotspot_grid_nodes_invert.png`.
+3. Set its Material node's resolution to match the input maps.
+4. Export the converted albedo, normal, and ORM with Material Maker.
+
+Finally, verify that all three outputs exist with matching dimensions and return their paths as JSON.
+
+The conversion graph itself owns all seam, normal, and ORM operations. The CLI only replaces image paths and runs it; it must not recreate Material Maker node logic in Python. Keep source-template mappings in the script until their number makes that awkward.
 
 ## Material Maker 1.7 command
 
@@ -103,30 +117,51 @@ Known local constraints:
 - The output directory must already exist.
 - Ignore the extra `.tres` file for the texture-only MVP.
 
-## Hotspot materials
+## Included source and reference assets
 
-For the MVP, “hotspot” means only an atlas-compatible PBR texture set. The user supplies a known-good panel layout/mask through a curated `.ptex` template. DreamUV mapping remains manual.
+- `devil_metal.ptex`: procedural metal source graph.
+- `devil/`: example 2048×2048 albedo, OpenGL normal, and ORM exports from that material, plus Material Maker's reference glTF plane.
+- `metal02_hotspot.ptex`: scratched-metal source graph.
+- `metal_02/`: example 2048×2048 albedo, OpenGL normal, and ORM exports from that material, plus Material Maker's reference glTF plane.
+- `hotspot_uv.png`: 2048×2048 UV-layout input.
+- `hotspot_grid_nodes.ptex`: graph that converts `hotspot_uv.png` through Image → Invert → Tones Step → Dilate/Erode → Invert.
+- `hotspot_grid_nodes_invert.png`: 2048×2048 exported hotspot panel mask produced by that graph.
+- Hotspot-conversion `.ptex`: still to be supplied; it will consume one material's three maps plus the mask and produce the final atlas maps.
 
-`HOTSPOT_MATERIAL.md` documents the authoring and Blender workflow. `metal02_hotspot.ptex` currently has scratched-metal nodes but no image or panel-mask node, so it is not sufficient as the atlas template described there.
+The example glTF files document Material Maker's output but are not required or generated by the texture-only MVP. `hotspot_uv.png` and `hotspot_grid_nodes.ptex` are authoring assets used only to regenerate the mask; conversion needs only the exported mask PNG.
+
+## Hotspot conversion
+
+The hotspot converter is independent of the source material. It accepts any compatible tileable PBR texture set:
+
+- Albedo
+- OpenGL normal
+- ORM
+- `hotspot_grid_nodes_invert.png`
+
+It outputs atlas-compatible albedo, normal, and ORM maps. No source-material graph needs to contain hotspot logic.
+
+`HOTSPOT_MATERIAL.md` documents how the converter modifies the three channels. DreamUV mapping remains manual and requires a Blender reference layout matching the mask. Despite its filename, `metal02_hotspot.ptex` is only a possible source material, not the converter.
 
 ## Delivery phases
 
-### Phase 1 — One end-to-end template
+### Phase 1 — Validate the supplied converter
 
-- Implement the CLI around `devil_metal.ptex`.
-- Expose two or three useful, verified parameters.
-- Export and validate a requested resolution.
-- Keep one small runnable test using a low resolution.
+- Add the completed hotspot-conversion `.ptex`.
+- Test it manually with either `devil/` or `metal_02/` as input.
+- Confirm that it consumes the three material maps and `hotspot_grid_nodes_invert.png`.
+- Verify its exported albedo, normal, and ORM visually and by dimensions.
 
-Done when one command reliably creates a generated `.ptex`, albedo, normal, and ORM map.
+Done when one known material can be converted without editing the graph.
 
-### Phase 2 — Useful template library
+### Phase 2 — Automate export and conversion
 
-- Add one known-good brick `.ptex`.
-- Add the actual hotspot atlas `.ptex` and its panel-mask asset.
-- Add only parameters that are useful in real prompts.
+- Implement `convert-hotspot` by patching only the converter's image paths and resolution.
+- Implement `generate` around one included source-material `.ptex`.
+- Expose only two or three useful, verified material parameters.
+- Keep one small runnable low-resolution check for each command.
 
-Done when metal, brick, and hotspot-atlas requests export without manual graph editing.
+Done when the CLI can export a plain material and convert any supplied compatible texture set into hotspot-atlas maps.
 
 ### Phase 3 — MCP wrapper
 
@@ -137,6 +172,7 @@ Expose the proven CLI operation as one structured MCP tool, for example:
   "template": "metal",
   "output": "./out/dark-metal",
   "size": 1024,
+  "hotspot": true,
   "parameters": {
     "color": "#34383d",
     "roughness": 0.65,
@@ -149,19 +185,21 @@ The MCP server delegates to the CLI and returns its JSON result. It does not dup
 
 ## Acceptance criteria
 
-- A single CLI command generates all expected files.
+- `convert-hotspot` accepts arbitrary compatible albedo, OpenGL normal, and ORM images.
+- It uses the fixed mask and supplied converter without reconstructing the graph in Python.
+- Plain and hotspot output sets each contain albedo, normal, and ORM maps.
 - Inputs and outputs may be outside the current working directory.
-- Supported parameters visibly affect the exported maps.
-- Output texture dimensions match `--size`.
+- All three input dimensions must match; mismatches fail clearly.
+- Output dimensions match the inputs or requested `--size`.
 - ORM channel order is documented and preserved.
-- Invalid templates, parameters, values, or output paths fail clearly.
-- Pi can discover supported templates/parameters without reading Python source.
+- Invalid templates, parameters, values, or paths fail clearly.
+- Pi can discover supported source templates and parameters without reading Python source.
 
 ## Inputs still needed
 
-- A known-good brick `.ptex` template.
-- The real hotspot atlas `.ptex` plus its panel-mask image, if already created.
-- The first two or three controls desired for each template. If unspecified, start with scale, primary color, and roughness where the graph supports them.
+- The completed hotspot-conversion `.ptex` with four identifiable Image inputs and Material outputs for albedo, normal, and ORM.
+- The matching Blender/DreamUV reference layout, needed for later UV mapping but not by the CLI.
+- The first two or three controls desired for the initial source-material template. If unspecified, start with scale, primary color, and roughness where supported.
 
 ## References
 
