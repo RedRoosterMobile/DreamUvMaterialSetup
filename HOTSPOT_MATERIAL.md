@@ -28,8 +28,10 @@ Create a reusable panel-texture atlas in Material Maker, map it automatically wi
 - `hotspot_grid_nodes_invert.png`: 2048×2048 panel mask exported from that graph.
 - `devil_metal.ptex` and `devil/`: procedural metal graph and example albedo, normal, ORM, and glTF exports.
 - `metal02_hotspot.ptex` and `metal_02/`: scratched-metal graph and example albedo, normal, ORM, and glTF exports.
+- `combined_orm_with_grid.ptex`: reusable converter with image inputs for albedo, OpenGL normal, ORM, and `hotspot_grid_nodes_invert.png`.
+- `devil/hotspot/`: successful 2048×2048 converter output containing hotspot albedo, normal, and ORM maps.
 
-The two metal graphs are source-material examples. Neither currently applies `hotspot_grid_nodes_invert.png`; that composition is the remaining atlas-template work.
+The two metal graphs are source-material examples. Hotspot processing is kept separately in `combined_orm_with_grid.ptex`, so any compatible material texture set can be used as input.
 
 ## 1. Prepare the source materials
 
@@ -153,7 +155,7 @@ Check the channels before export: `R = AO`, `G = roughness`, `B = metallic`.
 
 ## 7. Export both atlas materials
 
-Do not confuse the existing `devil/` and `metal_02/` files with completed atlas exports: they are unmasked source-material examples.
+The files directly inside `devil/` and `metal_02/` are unmasked source-material examples. `devil/hotspot/` is the completed test atlas export from `combined_orm_with_grid.ptex`.
 
 Export complete Godot 4 ORM texture sets for:
 
