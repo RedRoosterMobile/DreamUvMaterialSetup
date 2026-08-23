@@ -24,7 +24,7 @@
 			"emissiveTexture":{
 				"index":0
 			},
-			"name":"Untitled",
+			"name":"metal_02",
 			"normalTexture":{
 				"index":1
 			},
@@ -82,17 +82,17 @@
 			"name":"emission"
 		},
 		{
-			"uri":"Untitled_normal.png",
+			"uri":"metal_02_normal.png",
 			"mimeType":"image/png",
 			"name":"normal"
 		},
 		{
-			"uri":"Untitled_orm.png",
+			"uri":"metal_02_orm.png",
 			"mimeType":"image/png",
 			"name":"orm"
 		},
 		{
-			"uri":"Untitled_albedo.png",
+			"uri":"metal_02_albedo.png",
 			"mimeType":"image/png",
 			"name":"albedo"
 		}
