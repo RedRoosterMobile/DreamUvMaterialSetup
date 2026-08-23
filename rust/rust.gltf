@@ -24,7 +24,7 @@
 			"emissiveTexture":{
 				"index":0
 			},
-			"name":"Untitled",
+			"name":"Rust",
 			"normalTexture":{
 				"index":1
 			},
@@ -82,17 +82,17 @@
 			"name":"emission"
 		},
 		{
-			"uri":"Untitled_normal.png",
+			"uri":"rust_normal.png",
 			"mimeType":"image/png",
 			"name":"normal"
 		},
 		{
-			"uri":"Untitled_orm.png",
+			"uri":"rust_orm.png",
 			"mimeType":"image/png",
 			"name":"orm"
 		},
 		{
-			"uri":"Untitled_albedo.png",
+			"uri":"rust_albedo.png",
 			"mimeType":"image/png",
 			"name":"albedo"
 		}
