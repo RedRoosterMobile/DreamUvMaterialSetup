@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""MCP server (stdio) exposing mm-material as tools.
+
+Every tool runs the mm-material CLI and returns its JSON result; no generation logic lives here.
+Standard library only: newline-delimited JSON-RPC 2.0 on stdin/stdout, logs on stderr.
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+CLI = ROOT / "mm-material"
+OUT = ROOT / "out"
+PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+# Each Material Maker export takes a few seconds to about a minute; generate with hotspot runs two.
+TIMEOUT = 1500
+
+HOTSPOT_PARAMETERS = {
+    "type": "object",
+    "description": "Hotspot edge treatment: edge_relief, edge_softness, edge_brightness, edge_roughness. "
+    "See list_materials for ranges.",
+    "additionalProperties": {"type": "number"},
+}
+SIZE = {"type": "integer", "enum": [256, 512, 1024, 2048], "default": 1024}
+OUTPUT = {
+    "type": "string",
+    "description": "Output directory, absolute or relative to the project's out/ directory. "
+    "Existing albedo.png, normal.png, and orm.png in it are overwritten.",
+}
+
+TOOLS = [
+    {
+        "name": "list_materials",
+        "description": "List local materials with their parameters and ranges, the hotspot edge parameters, "
+        "and supported sizes.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "search_materials",
+        "description": "Search static PBR materials on materialmaker.org. Every word must appear in the name, "
+        "tags, description, or author. Returns ids for download_material.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Space-separated words, e.g. 'rust metal'. Empty lists all."},
+                "license": {"type": "string", "enum": ["CC0", "CC-BY", "CC-BY-SA"]},
+                "limit": {"type": "integer", "minimum": 1, "default": 20},
+            },
+        },
+    },
+    {
+        "name": "download_material",
+        "description": "Download a materialmaker.org material into materials/ so generate_material can use it. "
+        "Records author and license; CC-BY materials need attribution. Unlit materials are refused.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Website material id from search_materials."},
+                "name": {"type": "string", "description": "Local name (lowercase, digits, dashes). Default: from the website name."},
+                "force": {"type": "boolean", "description": "Replace a different download with the same name."},
+            },
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "generate_material",
+        "description": "Export a local material as albedo, OpenGL normal, and ORM (R = AO, G = roughness, "
+        "B = metallic) PNGs. With hotspot, also converts them to the hotspot atlas in <output>/hotspot. "
+        "Takes several seconds to a minute per export.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "material": {"type": "string", "description": "Material name from list_materials."},
+                "output": {**OUTPUT, "description": OUTPUT["description"] + " Default: out/<material>."},
+                "size": SIZE,
+                "parameters": {
+                    "type": "object",
+                    "description": "Material parameters from list_materials; every material accepts an integer seed.",
+                    "additionalProperties": {"type": "number"},
+                },
+                "hotspot": {"type": "boolean", "default": False},
+                "hotspot_parameters": {**HOTSPOT_PARAMETERS, "description": HOTSPOT_PARAMETERS["description"] + " Implies hotspot."},
+            },
+            "required": ["material"],
+        },
+    },
+    {
+        "name": "convert_hotspot",
+        "description": "Convert an existing square albedo, OpenGL normal, and ORM PNG set (256 to 2048, all the "
+        "same size) to the hotspot atlas layout.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "albedo": {"type": "string", "description": "Absolute path."},
+                "normal": {"type": "string", "description": "Absolute path."},
+                "orm": {"type": "string", "description": "Absolute path."},
+                "output": OUTPUT,
+                "parameters": HOTSPOT_PARAMETERS,
+            },
+            "required": ["albedo", "normal", "orm", "output"],
+        },
+    },
+]
+
+
+class ToolError(Exception):
+    pass
+
+
+class MethodNotFound(Exception):
+    pass
+
+
+def output_dir(path):
+    return str(OUT / Path(path).expanduser())  # an absolute path replaces OUT
+
+
+def input_file(path):
+    path = Path(path).expanduser()
+    if not path.is_absolute():
+        raise ToolError(f"input paths must be absolute, got {str(path)!r}")
+    return str(path)
+
+
+def param_args(flag, values):
+    if not isinstance(values or {}, dict):
+        raise ToolError(f"{flag.strip('-')} must be an object")
+    return [arg for name, value in (values or {}).items() for arg in (flag, f"{name}={value}")]
+
+
+def cli_args(name, a):
+    if name == "list_materials":
+        return ["list"]
+    if name == "search_materials":
+        args = ["search", *str(a.get("query", "")).split(), "--limit", str(a.get("limit", 20))]
+        return args + (["--license", a["license"]] if a.get("license") else [])
+    if name == "download_material":
+        args = ["download", str(a["id"])]
+        args += ["--name", a["name"]] if a.get("name") else []
+        return args + (["--force"] if a.get("force") else [])
+    if name == "generate_material":
+        material = a["material"]
+        args = ["generate", material, "--output", output_dir(a.get("output") or material), "--size", str(a.get("size", 1024))]
+        args += param_args("--param", a.get("parameters"))
+        args += ["--hotspot"] if a.get("hotspot") else []
+        return args + param_args("--hotspot-param", a.get("hotspot_parameters"))
+    if name == "convert_hotspot":
+        args = ["convert-hotspot", "--output", output_dir(a["output"])]
+        args += [arg for key in ("albedo", "normal", "orm") for arg in (f"--{key}", input_file(a[key]))]
+        return args + param_args("--param", a.get("parameters"))
+    raise ToolError(f"unknown tool {name!r}")
+
+
+def call_tool(name, arguments):
+    try:
+        args = cli_args(name, arguments)
+    except KeyError as e:
+        raise ToolError(f"missing argument {e.args[0]!r}")
+    try:
+        done = subprocess.run([sys.executable, str(CLI), *args], capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise ToolError(f"mm-material timed out after {TIMEOUT}s")
+    if done.returncode != 0:
+        raise ToolError(done.stderr.strip().removeprefix("error: ") or f"mm-material exited with {done.returncode}")
+    return json.loads(done.stdout)
+
+
+def handle(method, params):
+    if method == "initialize":
+        requested = params.get("protocolVersion")
+        return {
+            "protocolVersion": requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0],
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "material-maker", "version": "0.1.0"},
+            "instructions": "Create PBR texture sets with Material Maker. Use list_materials first; "
+            "search_materials and download_material add materials from materialmaker.org.",
+        }
+    if method == "ping":
+        return {}
+    if method == "tools/list":
+        return {"tools": TOOLS}
+    if method == "tools/call":
+        try:
+            result = call_tool(params["name"], params.get("arguments") or {})
+        except ToolError as e:
+            return {"content": [{"type": "text", "text": str(e)}], "isError": True}
+        return {"content": [{"type": "text", "text": json.dumps(result, indent=2)}], "structuredContent": result}
+    raise MethodNotFound(method)
+
+
+def main():
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
+            print(json.dumps(reply), flush=True)
+            continue
+        if "id" not in message:
+            continue  # notifications such as notifications/initialized need no reply
+        reply = {"jsonrpc": "2.0", "id": message["id"]}
+        try:
+            reply["result"] = handle(message.get("method"), message.get("params") or {})
+        except MethodNotFound:
+            reply["error"] = {"code": -32601, "message": f"method not found: {message.get('method')}"}
+        except Exception as e:
+            print(f"mm-material-mcp: {e!r}", file=sys.stderr)
+            reply["error"] = {"code": -32603, "message": str(e)}
+        print(json.dumps(reply), flush=True)
+
+
+if __name__ == "__main__":
+    main()

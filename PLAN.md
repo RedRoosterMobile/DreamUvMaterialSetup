@@ -65,7 +65,7 @@ Add these only after the template workflow proves too limiting.
   --output ./out/hotspot-metal
 ```
 
-`generate ... --hotspot` may later combine these two operations as a convenience, without adding separate conversion logic.
+`generate ... --hotspot` combines both: it converts the exported maps into `<output>/hotspot/` with the same conversion code. `--hotspot-param NAME=VALUE` passes edge parameters and implies `--hotspot`.
 
 Unsupported template names or parameters fail with a useful message. A `list` command can show available templates and their parameters if needed by pi.
 
@@ -200,25 +200,31 @@ Done when the CLI can export a plain material and convert any supplied compatibl
 
 Possible later step: expose it as an `apply-hotspot` MCP tool that delegates to Blender MCP.
 
-### Phase 3 — MCP wrapper
+### Phase 3 — MCP wrapper — complete
 
-Expose the proven CLI operation as one structured MCP tool, for example:
+`mm-material-mcp` is a stdio MCP server that uses only the standard library. Each tool runs `mm-material` and returns its JSON as `structuredContent`; CLI errors become tool errors (`isError`). `.mcp.json` registers it for Claude Code as `material-maker`. For other clients, run `python3 /path/to/mm-material-mcp`.
+
+| Tool | CLI |
+| --- | --- |
+| `list_materials` | `list` |
+| `search_materials` (`query`, `license`, `limit`) | `search` |
+| `download_material` (`id`, `name`, `force`) | `download` |
+| `generate_material` (`material`, `output`, `size`, `parameters`, `hotspot`, `hotspot_parameters`) | `generate [--hotspot]` |
+| `convert_hotspot` (`albedo`, `normal`, `orm`, `output`, `parameters`) | `convert-hotspot` |
 
 ```json
 {
-  "template": "metal",
-  "output": "./out/dark-metal",
+  "material": "metal-scratched",
   "size": 1024,
+  "parameters": {"seed": 3, "dirt_amount": 0.6},
   "hotspot": true,
-  "parameters": {
-    "color": "#34383d",
-    "roughness": 0.65,
-    "scratch_scale": 24
-  }
+  "hotspot_parameters": {"edge_relief": 0.4}
 }
 ```
 
-The MCP server delegates to the CLI and returns its JSON result. It does not duplicate generation or export logic.
+- `output` is optional for `generate_material` and defaults to `out/<material>`. Relative output paths resolve against the project's `out/` directory; input map paths must be absolute.
+- Calls run one at a time. A 2048 `generate_material` with `hotspot` runs two Material Maker exports.
+- `check.sh` exercises `generate --hotspot` and `convert_hotspot` through the server.
 
 ## Acceptance criteria
 

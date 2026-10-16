@@ -304,27 +304,8 @@ def cmd_download(args):
     return {"material": name, "ptex": str(ptex), "material_node": node["type"], "source": source}
 
 
-def cmd_generate(args):
-    available = load_materials()
-    if args.template not in available:
-        raise CliError(f"unknown material {args.template!r}; available: {', '.join(available)}")
-    template = available[args.template]
-    check_size(args.size)
-    values = dict(parse_param(template["params"], raw, args.template) for raw in args.param)
-
-    graph = json.loads(template["path"].read_text())
-    if "seed" in values:
-        reseed(graph, values["seed"])
-    apply_params(graph, template["params"], {k: v for k, v in values.items() if k != "seed"})
-
-    output = args.output.resolve()
-    ptex = write_graph(graph, output, "material")
-    result = export(ptex, output, args.size, constant_orm(graph))
-    return {"template": args.template, "parameters": values, "ptex": str(ptex), **result}
-
-
-def cmd_convert_hotspot(args):
-    inputs = {"albedo": args.albedo, "normal": args.normal, "orm": args.orm}
+def convert_hotspot(inputs, output, raw_params):
+    """Convert albedo, normal, and ORM PNGs to the hotspot atlas layout in output."""
     sizes = {}
     for name, path in inputs.items():
         path = path.resolve()
@@ -339,7 +320,7 @@ def cmd_convert_hotspot(args):
         raise CliError(f"input maps must be square, got {width}x{height}")
     check_size(width)
 
-    values = dict(parse_param(HOTSPOT_PARAMS, raw, "convert-hotspot", seed=False) for raw in args.param)
+    values = dict(parse_param(HOTSPOT_PARAMS, raw, "convert-hotspot", seed=False) for raw in raw_params)
 
     graph = json.loads(CONVERTER.read_text())
     apply_params(graph, HOTSPOT_PARAMS, values)
@@ -347,10 +328,41 @@ def cmd_convert_hotspot(args):
     for node_name, path in images.items():
         find_node(graph, node_name)["parameters"]["image"] = str(path)
 
-    output = args.output.resolve()
     ptex = write_graph(graph, output, "hotspot")
     result = export(ptex, output, width)
     return {"inputs": {k: str(v) for k, v in inputs.items()}, "parameters": values, "ptex": str(ptex), **result}
+
+
+def cmd_generate(args):
+    available = load_materials()
+    if args.template not in available:
+        raise CliError(f"unknown material {args.template!r}; available: {', '.join(available)}")
+    template = available[args.template]
+    check_size(args.size)
+    values = dict(parse_param(template["params"], raw, args.template) for raw in args.param)
+    hotspot = args.hotspot or bool(args.hotspot_param)
+    if hotspot:
+        # Validate before the slow material export.
+        for raw in args.hotspot_param:
+            parse_param(HOTSPOT_PARAMS, raw, "convert-hotspot", seed=False)
+
+    graph = json.loads(template["path"].read_text())
+    if "seed" in values:
+        reseed(graph, values["seed"])
+    apply_params(graph, template["params"], {k: v for k, v in values.items() if k != "seed"})
+
+    output = args.output.resolve()
+    ptex = write_graph(graph, output, "material")
+    result = export(ptex, output, args.size, constant_orm(graph))
+    if hotspot:
+        maps = {k: Path(v) for k, v in result["maps"].items()}
+        result["hotspot"] = convert_hotspot(maps, output / "hotspot", args.hotspot_param)
+    return {"material": args.template, "parameters": values, "ptex": str(ptex), **result}
+
+
+def cmd_convert_hotspot(args):
+    inputs = {"albedo": args.albedo, "normal": args.normal, "orm": args.orm}
+    return convert_hotspot(inputs, args.output.resolve(), args.param)
 
 
 def main():
@@ -374,6 +386,9 @@ def main():
     gen.add_argument("--output", type=Path, required=True)
     gen.add_argument("--size", type=int, default=1024)
     gen.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
+    gen.add_argument("--hotspot", action="store_true", help="also convert the maps to the hotspot atlas in OUTPUT/hotspot")
+    gen.add_argument("--hotspot-param", action="append", default=[], metavar="NAME=VALUE",
+                     help="convert-hotspot parameter; implies --hotspot")
 
     hs = sub.add_parser("convert-hotspot", help="convert a texture set to the hotspot atlas layout")
     hs.add_argument("--albedo", type=Path, required=True)
