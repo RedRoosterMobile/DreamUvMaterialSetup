@@ -97,7 +97,7 @@ For each source material, start from either the `devil/` or `metal_02/` texture 
 
 1. Load the source albedo.
 2. Duplicate it through a **Hue/Saturation/Value** node.
-3. Reduce **Value** on the duplicate to create a darker version.
+3. Reduce **Value** on the duplicate to create a darker version. The converter uses `0.7`; the earlier `0.43` drew a heavy dark outline.
 4. Blend the original and darkened versions with **Filter Blend**.
 5. Use `panel_mask` as the blend mask.
 6. Reverse the blend inputs or invert the mask if the panel faces become dark instead of the separators.
@@ -111,24 +111,25 @@ Expected result: panel separators are darker, while their edges receive a restra
 Build this node chain:
 
 ```text
-panel_mask → Normal Map
-source_normal ──────────┐
-panel_normal ───────────┴→ Normal Map Blend → final_normal
+panel_mask → Gaussian Blur → Normal Map
+source_normal ──────────────────────────┐
+panel_normal ───────────────────────────┴→ Normal Map Blend → final_normal
 ```
 
-1. Convert `panel_mask` to a normal map as if it were a height map.
-2. Keep the relief subtle; the separators should read as shallow grooves, not deep cuts.
-3. Convert maps to the same orientation before blending.
-4. Blend the panel normal with the source material's normal using **Normal Map Blend**.
-5. Export the result in the OpenGL orientation expected by Godot.
+1. Blur `panel_mask` (**Gaussian Blur**, sigma `3` at 2048) so the groove gets a sloped profile instead of a one-pixel step.
+2. Convert the blurred mask to a normal map as if it were a height map, at a low **strength** (`0.2`).
+3. Keep the relief subtle; the separators should read as shallow grooves, not deep cuts.
+4. Convert maps to the same orientation before blending.
+5. Blend the panel normal with the source material's normal using **Normal Map Blend**.
+6. Export the result in the OpenGL orientation expected by Godot.
 
 ## 6. Modify the ORM texture at panel separators
 
 Use the mask to alter the source ORM only around panel separators:
 
 - Reduce ambient occlusion values to darken the recesses.
-- Increase roughness by approximately `0.5`.
-- Reduce metallic.
+- Increase roughness slightly (the converter uses `+0.15`).
+- Reduce metallic slightly (the converter uses `-0.2`).
 
 Suggested graph:
 
@@ -195,6 +196,20 @@ Inspect the result and rerun Hotspot on smaller face selections when:
 - The chosen atlas rectangle has the wrong aspect ratio
 - Adjacent faces need to remain one panel
 - Visible stretching occurs
+
+### Edge treatment
+
+Tuned on 2026-10-16 by comparing variants on a chamfered test mesh in Blender. Without blur, the mask is a hard step. At normal strength `1.0`, every panel border became a hard, saturated ridge, plus a heavy dark outline and matte edges (roughness `+0.5`). The converter's defaults are now:
+
+| Setting | Node | Old | New |
+| --- | --- | --- | --- |
+| Groove softness | new `edge_blur` (Gaussian Blur, sigma) | none | `3` |
+| Groove relief | `normal_map2` strength | `1.0` | `0.2` |
+| Separator brightness | `adjust_hsv` value | `0.43` | `0.7` |
+| Separator roughness | `math_v3` `d_in2_y` | `+0.5` | `+0.15` |
+| Separator metallic | `math_v3` `d_in2_z` | `-0.5` | `-0.2` |
+
+All except metallic can be changed per run, for example `mm-material convert-hotspot … --param edge_relief=0.4 --param edge_brightness=0.5`. The parameters are `edge_softness`, `edge_relief`, `edge_brightness`, and `edge_roughness`, and `mm-material list` shows their ranges.
 
 ### Scripted via Blender MCP
 

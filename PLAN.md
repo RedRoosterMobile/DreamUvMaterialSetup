@@ -163,6 +163,7 @@ The remaining work starts with CLI automation; Python does not need to construct
 - [x] Sizes 256, 512, 1024, and 2048.
 - [x] Converting the `devil/` maps reproduces `devil/hotspot/` byte for byte.
 - [x] `check.sh` runs both commands at 256×256.
+- [x] `convert-hotspot` accepts `edge_relief`, `edge_softness`, `edge_brightness`, and `edge_roughness`; softer converter defaults are documented in `HOTSPOT_MATERIAL.md` (Edge treatment), and `devil/hotspot/` was re-exported with them.
 
 Original tasks:
 

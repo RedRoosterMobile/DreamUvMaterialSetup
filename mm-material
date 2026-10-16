@@ -46,6 +46,14 @@ TEMPLATES = {
     },
 }
 
+# Edge treatment of the hotspot converter; defaults live in combined_orm_with_grid.ptex.
+HOTSPOT_PARAMS = {
+    "edge_relief": ("normal_map2", "strength", float, (0, 1)),
+    "edge_softness": ("edge_blur", "param1", float, (0.5, 10)),
+    "edge_brightness": ("adjust_hsv", "value", float, (0, 1)),
+    "edge_roughness": ("math_v3", "d_in2_y", float, (-0.5, 0.5)),
+}
+
 
 class CliError(Exception):
     pass
@@ -71,19 +79,18 @@ def find_node(graph, name):
     raise CliError(f"node {name!r} not found in graph")
 
 
-def parse_param(template_name, raw):
+def parse_param(params, raw, owner, seed=True):
     if "=" not in raw:
         raise CliError(f"parameter must be name=value, got {raw!r}")
     name, value = raw.split("=", 1)
-    params = TEMPLATES[template_name]["params"]
-    if name == "seed":
+    if seed and name == "seed":
         try:
             return name, int(value)
         except ValueError:
             raise CliError(f"seed must be an integer, got {value!r}")
     if name not in params:
-        allowed = ", ".join(["seed", *params])
-        raise CliError(f"unknown parameter {name!r} for {template_name}; allowed: {allowed}")
+        allowed = ", ".join([*(["seed"] if seed else []), *params])
+        raise CliError(f"unknown parameter {name!r} for {owner}; allowed: {allowed}")
     _, _, kind, (low, high) = params[name]
     try:
         number = kind(value)
@@ -92,6 +99,18 @@ def parse_param(template_name, raw):
     if not low <= number <= high:
         raise CliError(f"{name} must be between {low} and {high}, got {number}")
     return name, number
+
+
+def apply_params(graph, params, values):
+    for name, value in values.items():
+        node_name, keys, _, _ = params[name]
+        node = find_node(graph, node_name)
+        for key in keys if isinstance(keys, tuple) else (keys,):
+            node["parameters"][key] = value
+
+
+def describe_params(params):
+    return {p: {"type": kind.__name__, "min": low, "max": high} for p, (_, _, kind, (low, high)) in params.items()}
 
 
 def export(ptex, output, size):
@@ -153,16 +172,11 @@ def cmd_list(args):
         "templates": {
             name: {
                 "description": t["description"],
-                "parameters": {
-                    "seed": {"type": "int"},
-                    **{
-                        p: {"type": kind.__name__, "min": low, "max": high}
-                        for p, (_, _, kind, (low, high)) in t["params"].items()
-                    },
-                },
+                "parameters": {"seed": {"type": "int"}, **describe_params(t["params"])},
             }
             for name, t in TEMPLATES.items()
         },
+        "convert_hotspot_parameters": describe_params(HOTSPOT_PARAMS),
         "sizes": list(SIZES),
     }
 
@@ -172,17 +186,12 @@ def cmd_generate(args):
         raise CliError(f"unknown template {args.template!r}; available: {', '.join(TEMPLATES)}")
     template = TEMPLATES[args.template]
     check_size(args.size)
-    values = dict(parse_param(args.template, raw) for raw in args.param)
+    values = dict(parse_param(template["params"], raw, args.template) for raw in args.param)
 
     graph = json.loads((ROOT / template["file"]).read_text())
-    for name, value in values.items():
-        if name == "seed":
-            reseed(graph, value)
-            continue
-        node_name, keys, _, _ = template["params"][name]
-        node = find_node(graph, node_name)
-        for key in keys if isinstance(keys, tuple) else (keys,):
-            node["parameters"][key] = value
+    if "seed" in values:
+        reseed(graph, values["seed"])
+    apply_params(graph, template["params"], {k: v for k, v in values.items() if k != "seed"})
 
     output = args.output.resolve()
     ptex = write_graph(graph, output, "material")
@@ -206,7 +215,10 @@ def cmd_convert_hotspot(args):
         raise CliError(f"input maps must be square, got {width}x{height}")
     check_size(width)
 
+    values = dict(parse_param(HOTSPOT_PARAMS, raw, "convert-hotspot", seed=False) for raw in args.param)
+
     graph = json.loads(CONVERTER.read_text())
+    apply_params(graph, HOTSPOT_PARAMS, values)
     images = {"image": inputs["albedo"], "image_2": inputs["normal"], "image_3": inputs["orm"], "image_4": HOTSPOT_MASK}
     for node_name, path in images.items():
         find_node(graph, node_name)["parameters"]["image"] = str(path)
@@ -214,7 +226,7 @@ def cmd_convert_hotspot(args):
     output = args.output.resolve()
     ptex = write_graph(graph, output, "hotspot")
     result = export(ptex, output, width)
-    return {"inputs": {k: str(v) for k, v in inputs.items()}, "ptex": str(ptex), **result}
+    return {"inputs": {k: str(v) for k, v in inputs.items()}, "parameters": values, "ptex": str(ptex), **result}
 
 
 def main():
@@ -234,6 +246,7 @@ def main():
     hs.add_argument("--normal", type=Path, required=True)
     hs.add_argument("--orm", type=Path, required=True)
     hs.add_argument("--output", type=Path, required=True)
+    hs.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
 
     args = parser.parse_args()
     handler = {"list": cmd_list, "generate": cmd_generate, "convert-hotspot": cmd_convert_hotspot}[args.command]

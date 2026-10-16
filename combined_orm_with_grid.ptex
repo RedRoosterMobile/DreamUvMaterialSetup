@@ -37,12 +37,6 @@
 			"to_port": 2
 		},
 		{
-			"from": "image_4",
-			"from_port": 0,
-			"to": "normal_map2",
-			"to_port": 0
-		},
-		{
 			"from": "normal_map2",
 			"from_port": 0,
 			"to": "normal_blend",
@@ -137,6 +131,18 @@
 			"from_port": 0,
 			"to": "normal_blend",
 			"to_port": 1
+		},
+		{
+			"from": "image_4",
+			"from_port": 0,
+			"to": "edge_blur",
+			"to_port": 0
+		},
+		{
+			"from": "edge_blur",
+			"from_port": 0,
+			"to": "normal_map2",
+			"to_port": 0
 		}
 	],
 	"label": "Graph",
@@ -240,7 +246,7 @@
 			"parameters": {
 				"hue": 0.0,
 				"saturation": 1.0,
-				"value": 0.4333
+				"value": 0.7
 			},
 			"seed_int": 0,
 			"type": "adjust_hsv"
@@ -328,7 +334,7 @@
 				"buffer": 1.0,
 				"param2": 0.0,
 				"size": 11,
-				"strength": 1.0
+				"strength": 0.2
 			},
 			"seed_int": 0,
 			"type": "normal_map2"
@@ -380,8 +386,8 @@
 				"d_in1_y": 0.0,
 				"d_in1_z": 0.0,
 				"d_in2_x": -1.0,
-				"d_in2_y": 0.5,
-				"d_in2_z": -0.5,
+				"d_in2_y": 0.15,
+				"d_in2_z": -0.2,
 				"op": 2
 			},
 			"seed_int": 0,
@@ -522,6 +528,21 @@
 			},
 			"seed_int": 0,
 			"type": "tones"
+		},
+		{
+			"name": "edge_blur",
+			"node_position": {
+				"x": -400.0,
+				"y": 150.0
+			},
+			"parameters": {
+				"param0": 11,
+				"param1": 3.0,
+				"param2": 0.0,
+				"param3": false
+			},
+			"seed_int": 0,
+			"type": "gaussian_blur"
 		}
 	],
 	"parameters": {},
