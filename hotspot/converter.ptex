@@ -190,7 +190,7 @@
 			"parameters": {
 				"clamp": false,
 				"fix_ar": false,
-				"image": "%PROJECT_PATH%/devil/devil_material_albedo.png"
+				"image": "%PROJECT_PATH%/../examples/metal-noise/albedo.png"
 			},
 			"seed_int": 0,
 			"type": "image"
@@ -204,7 +204,7 @@
 			"parameters": {
 				"clamp": false,
 				"fix_ar": false,
-				"image": "%PROJECT_PATH%/devil/devil_material_normal.png"
+				"image": "%PROJECT_PATH%/../examples/metal-noise/normal.png"
 			},
 			"seed_int": 0,
 			"type": "image"
@@ -218,7 +218,7 @@
 			"parameters": {
 				"clamp": false,
 				"fix_ar": false,
-				"image": "%PROJECT_PATH%/devil/devil_material_orm.png"
+				"image": "%PROJECT_PATH%/../examples/metal-noise/orm.png"
 			},
 			"seed_int": 0,
 			"type": "image"
@@ -232,7 +232,7 @@
 			"parameters": {
 				"clamp": false,
 				"fix_ar": false,
-				"image": "%PROJECT_PATH%/hotspot_grid_nodes_invert.png"
+				"image": "%PROJECT_PATH%/mask.png"
 			},
 			"seed_int": 0,
 			"type": "image"

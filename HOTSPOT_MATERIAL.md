@@ -23,15 +23,17 @@ Create a reusable panel-texture atlas in Material Maker, map it automatically wi
 
 ## Included project assets
 
-- `hotspot_uv.png`: 2048×2048 UV layout exported from Blender.
-- `hotspot_grid_nodes.ptex`: Material Maker graph that converts the UV layout into a panel mask.
-- `hotspot_grid_nodes_invert.png`: 2048×2048 panel mask exported from that graph.
-- `devil_metal.ptex` and `devil/`: procedural metal graph and example albedo, normal, ORM, and glTF exports.
-- `metal02_hotspot.ptex` and `metal_02/`: scratched-metal graph and example albedo, normal, ORM, and glTF exports.
-- `combined_orm_with_grid.ptex`: reusable converter with image inputs for albedo, OpenGL normal, ORM, and `hotspot_grid_nodes_invert.png`.
-- `devil/hotspot/`: successful 2048×2048 converter output containing hotspot albedo, normal, and ORM maps.
+- `hotspot/layout.blend`: subdivided reference plane that defines the atlas panels.
+- `hotspot/layout.png`: 2048×2048 UV layout exported from that plane.
+- `hotspot/mask.ptex`: Material Maker graph that converts the UV layout into a panel mask.
+- `hotspot/mask.png`: 2048×2048 panel mask exported from that graph.
+- `hotspot/converter.ptex`: reusable converter with image inputs for albedo, OpenGL normal, ORM, and `hotspot/mask.png`.
+- `materials/metal-noise.ptex` and `examples/metal-noise/`: procedural metal graph and its albedo, normal, and ORM exports.
+- `materials/metal-scratched.ptex` and `examples/metal-scratched/`: scratched-metal graph and its exports.
+- `examples/rust/`: rusty-metal texture set.
+- `examples/metal-noise/hotspot/`: 2048×2048 converter output containing hotspot albedo, normal, and ORM maps.
 
-The two metal graphs are source-material examples. Hotspot processing is kept separately in `combined_orm_with_grid.ptex`, so any compatible material texture set can be used as input.
+The metal graphs are source-material examples; `mm-material download` adds more from materialmaker.org. Hotspot processing is kept separately in `hotspot/converter.ptex`, so any compatible material texture set can be used as input.
 
 ## 1. Prepare the source materials
 
@@ -69,10 +71,10 @@ The exported image must clearly show every rectangular panel boundary.
 
 ## 3. Convert the UV layout into a panel mask
 
-This conversion is already captured in `hotspot_grid_nodes.ptex`. It reads `hotspot_uv.png` and uses this node chain:
+This conversion is already captured in `hotspot/mask.ptex`. It reads `hotspot/layout.png` and uses this node chain:
 
 ```text
-hotspot_uv.png → Image → Invert → Tones Step → Dilate/Erode → Invert → hotspot_grid_nodes_invert.png
+layout.png → Image → Invert → Tones Step → Dilate/Erode → Invert → mask.png
 ```
 
 Adjust the nodes as follows:
@@ -89,11 +91,11 @@ The final mask must have:
 - No gray noise away from the separators
 - No broken lines
 
-The included result is `hotspot_grid_nodes_invert.png` at 2048×2048. Re-export it from `hotspot_grid_nodes.ptex` only when the UV layout or separator settings change, and keep it at the same resolution as the material textures.
+The included result is `hotspot/mask.png` at 2048×2048. Re-export it from `hotspot/mask.ptex` only when the UV layout or separator settings change, and keep it at the same resolution as the material textures.
 
 ## 4. Add panel detail to the albedo
 
-For each source material, start from either the `devil/` or `metal_02/` texture set and use `hotspot_grid_nodes_invert.png` as `panel_mask`:
+For each source material, start from a texture set in `examples/` and use `hotspot/mask.png` as `panel_mask`:
 
 1. Load the source albedo.
 2. Duplicate it through a **Hue/Saturation/Value** node.
@@ -156,7 +158,7 @@ Check the channels before export: `R = AO`, `G = roughness`, `B = metallic`.
 
 ## 7. Export both atlas materials
 
-The files directly inside `devil/` and `metal_02/` are unmasked source-material examples. `devil/hotspot/` is the completed test atlas export from `combined_orm_with_grid.ptex`.
+The maps directly inside each `examples/` folder are unmasked source materials. `examples/metal-noise/hotspot/` is the completed test atlas export from `hotspot/converter.ptex`.
 
 Export complete Godot 4 ORM texture sets for:
 
@@ -223,7 +225,7 @@ hotspot["apply_hotspot"]("MyMesh", "/path/to/out/hotspot-metal")  # albedo.png, 
 
 `apply_hotspot` does the following:
 
-1. Appends the subdivided plane from `hotspot_uv.blend` as `HotspotAtlas` (36 panels), hidden in the viewport and render. Later runs reuse it.
+1. Appends the subdivided plane from `hotspot/layout.blend` as `HotspotAtlas` (36 panels), hidden in the viewport and render. Later runs reuse it.
 2. Creates a Principled BSDF material from the three maps:
    - Albedo is multiplied by AO (ORM red).
    - ORM green is connected to roughness and blue to metallic.

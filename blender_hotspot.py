@@ -7,7 +7,7 @@ Run in Blender (e.g. through Blender MCP's execute_blender_code):
     result = hotspot["apply_hotspot"]("Cube", "/path/to/hotspot-maps")
 
 The maps directory must contain albedo.png, normal.png, and orm.png as written by
-`mm-material convert-hotspot`. Pass names=... for other file names, e.g. devil/hotspot/devil_orm_*.png.
+`mm-material convert-hotspot`. Pass names=... for other file names, e.g. Material Maker's <name>_albedo.png exports.
 
 Requires the DreamUV add-on. On Blender 5.x, DreamUV's DUV_Utils.square_fit must call
 mesh.select_edge_loop_multi instead of the removed mesh.loop_multi_select (see HOTSPOT_MATERIAL.md).
@@ -17,7 +17,7 @@ import os
 
 import bpy
 
-ATLAS_BLEND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hotspot_uv.blend")
+ATLAS_BLEND = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hotspot", "layout.blend")
 ATLAS_NAME = "HotspotAtlas"
 
 

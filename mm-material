@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Export PBR texture sets from Material Maker templates and convert them to the hotspot atlas.
+"""Export PBR texture sets from Material Maker materials and convert them to the hotspot atlas.
+
+Materials are the .ptex graphs in materials/. More can be fetched from materialmaker.org with
+`search` and `download`.
 
 Prints a JSON result on stdout. Errors go to stderr with a non-zero exit code.
 """
@@ -9,14 +12,20 @@ import json
 import random
 import shutil
 import struct
+import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 MATERIAL_MAKER = Path("/Applications/Material Maker.app/Contents/MacOS/Material Maker")
-CONVERTER = ROOT / "combined_orm_with_grid.ptex"
-HOTSPOT_MASK = ROOT / "hotspot_grid_nodes_invert.png"
+MATERIALS = ROOT / "materials"
+CONVERTER = ROOT / "hotspot" / "converter.ptex"
+HOTSPOT_MASK = ROOT / "hotspot" / "mask.png"
+WEBSITE_API = "https://www.materialmaker.org/api"
 MAPS = ("albedo", "normal", "orm")
 EXPORT_TIMEOUT = 600
 # Material Maker 1.7 hardcodes 2048 for command-line exports (src/parse_args.gd ignores --size and the
@@ -24,10 +33,10 @@ EXPORT_TIMEOUT = 600
 RENDER_SIZE = 2048
 SIZES = (256, 512, 1024, 2048)
 
+# Curated materials/<name>.ptex with friendly parameters. Other materials only accept seed.
 # Friendly parameter -> (node name, parameter key or keys, type, (min, max))
 TEMPLATES = {
     "metal-scratched": {
-        "file": "metal02_hotspot.ptex",
         "description": "Brushed metal with layered scratches and dirt.",
         "params": {
             "scratch_angle": ("scratches", "angle", float, (-180, 180)),
@@ -37,7 +46,6 @@ TEMPLATES = {
         },
     },
     "metal-noise": {
-        "file": "devil_metal.ptex",
         "description": "Noisy, mottled procedural metal.",
         "params": {
             "scale": ("fbm3", ("scale_x", "scale_y"), float, (1, 32)),
@@ -46,7 +54,7 @@ TEMPLATES = {
     },
 }
 
-# Edge treatment of the hotspot converter; defaults live in combined_orm_with_grid.ptex.
+# Edge treatment of the hotspot converter; defaults live in hotspot/converter.ptex.
 HOTSPOT_PARAMS = {
     "edge_relief": ("normal_map2", "strength", float, (0, 1)),
     "edge_softness": ("edge_blur", "param1", float, (0.5, 10)),
@@ -113,8 +121,32 @@ def describe_params(params):
     return {p: {"type": kind.__name__, "min": low, "max": high} for p, (_, _, kind, (low, high)) in params.items()}
 
 
-def export(ptex, output, size):
-    """Run Material Maker on ptex and write its maps to output/{albedo,normal,orm}.png at size."""
+def write_flat_png(path, size, rgb):
+    """Write a size x size RGB PNG filled with rgb (0-1 floats)."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    row = b"\0" + bytes(round(max(0, min(1, c)) * 255) for c in rgb) * size
+    ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(row * size)) + chunk(b"IEND", b""))
+
+
+def constant_orm(graph):
+    """(AO, roughness, metallic) when none of them is connected to the Material node, else None.
+
+    Material Maker skips the ORM map in that case, so it has to be written from the node's constants.
+    """
+    if any(c["to"] == "Material" and c["to_port"] in (1, 2, 5) for c in graph["connections"]):
+        return None
+    params = find_node(graph, "Material")["parameters"]
+    return tuple(float(params.get(key, 1)) for key in ("ao", "roughness", "metallic"))
+
+
+def export(ptex, output, size, flat_orm=None):
+    """Run Material Maker on ptex and write its maps to output/{albedo,normal,orm}.png at size.
+
+    flat_orm, if given, is the (AO, roughness, metallic) color of an ORM map Material Maker does not export.
+    """
     if not MATERIAL_MAKER.exists():
         raise CliError(f"Material Maker not found at {MATERIAL_MAKER}")
     raw_dir = output / "work" / "export"
@@ -131,11 +163,13 @@ def export(ptex, output, size):
     paths = {}
     for map_name in MAPS:
         produced = raw_dir / f"{ptex.stem}_{map_name}.png"
-        if not produced.exists():
+        if not produced.exists() and not (map_name == "orm" and flat_orm):
             log = (result.stdout + result.stderr).strip()[-2000:]
             raise CliError(f"Material Maker did not produce {produced.name} (exit {result.returncode})\n{log}")
         target = output / f"{map_name}.png"
-        if size == RENDER_SIZE:
+        if map_name == "orm" and flat_orm:
+            write_flat_png(target, size, flat_orm)
+        elif size == RENDER_SIZE:
             shutil.move(produced, target)
         else:
             resize = ["sips", "-z", str(size), str(size), str(produced), "--out", str(target)]
@@ -167,35 +201,125 @@ def write_graph(graph, output, name):
     return ptex
 
 
+def load_materials():
+    """Name -> material info for every materials/*.ptex; downloads carry a .json sidecar with their source."""
+    found = {}
+    for ptex in sorted(MATERIALS.glob("*.ptex")):
+        name = ptex.stem
+        info = {"path": ptex, "description": "", "params": {}}
+        if name in TEMPLATES:
+            info.update(TEMPLATES[name])
+        meta = ptex.with_suffix(".json")
+        if meta.exists():
+            info["source"] = json.loads(meta.read_text())
+            info["description"] = info["description"] or info["source"]["description"]
+        found[name] = info
+    return found
+
+
+def fetch_json(url):
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:
+            return json.load(response)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        raise CliError(f"request to {url} failed: {e}")
+
+
+def website_materials():
+    """Static PBR materials on materialmaker.org; other types are brushes, environments, and animated materials."""
+    return [m for m in fetch_json(f"{WEBSITE_API}/getMaterials") if m["type"] == 0]
+
+
+def slugify(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
 def cmd_list(args):
     return {
-        "templates": {
+        "materials": {
             name: {
-                "description": t["description"],
-                "parameters": {"seed": {"type": "int"}, **describe_params(t["params"])},
+                "description": m["description"],
+                "parameters": {"seed": {"type": "int"}, **describe_params(m["params"])},
+                **({"source": m["source"]} if "source" in m else {}),
             }
-            for name, t in TEMPLATES.items()
+            for name, m in load_materials().items()
         },
         "convert_hotspot_parameters": describe_params(HOTSPOT_PARAMS),
         "sizes": list(SIZES),
     }
 
 
+def cmd_search(args):
+    words = [w.lower() for w in args.query]
+    downloaded = {m["source"]["id"]: name for name, m in load_materials().items() if "source" in m}
+    results = []
+    for m in website_materials():
+        text = " ".join((m["name"], m["tags"], m["description"], m["author"])).lower()
+        if all(w in text for w in words) and (not args.license or m["license"] == args.license):
+            results.append({
+                "id": m["id"],
+                "name": m["name"],
+                "author": m["author"],
+                "license": m["license"],
+                "tags": m["tags"],
+                "description": m["description"],
+                **({"downloaded_as": downloaded[m["id"]]} if m["id"] in downloaded else {}),
+            })
+    return {"count": len(results), "materials": results[: args.limit]}
+
+
+def cmd_download(args):
+    listing = {m["id"]: m for m in website_materials()}
+    if args.id not in listing:
+        raise CliError(f"no material with id {args.id} on materialmaker.org; use `search` to find ids")
+    info = listing[args.id]
+    name = args.name or slugify(info["name"]) or f"material-{args.id}"
+    if slugify(name) != name:
+        raise CliError(f"name must be lowercase letters, digits, and dashes, got {name!r}")
+    ptex = MATERIALS / f"{name}.ptex"
+    meta = ptex.with_suffix(".json")
+    if name in TEMPLATES or (ptex.exists() and not meta.exists()):
+        raise CliError(f"{name!r} is a curated material; pass --name to save under another name")
+    if ptex.exists() and json.loads(meta.read_text())["id"] != args.id and not args.force:
+        raise CliError(f"{name!r} already holds another download; pass --name or --force")
+
+    graph = json.loads(fetch_json(f"{WEBSITE_API}/getMaterial?id={args.id}")["json"])
+    node = next((n for n in graph["nodes"] if n["name"] == "Material"), None)
+    if node is None:
+        raise CliError(f"material {args.id} has no Material node")
+    if node["type"] == "material_unlit":
+        raise CliError(f"material {args.id} is unlit and has no albedo, normal, or ORM maps to export")
+
+    source = {
+        "id": args.id,
+        "name": info["name"],
+        "author": info["author"],
+        "license": info["license"],
+        "description": info["description"],
+        "tags": info["tags"],
+        "url": f"https://www.materialmaker.org/material?id={args.id}",
+    }
+    ptex.write_text(json.dumps(graph, indent=1))
+    meta.write_text(json.dumps(source, indent=2) + "\n")
+    return {"material": name, "ptex": str(ptex), "material_node": node["type"], "source": source}
+
+
 def cmd_generate(args):
-    if args.template not in TEMPLATES:
-        raise CliError(f"unknown template {args.template!r}; available: {', '.join(TEMPLATES)}")
-    template = TEMPLATES[args.template]
+    available = load_materials()
+    if args.template not in available:
+        raise CliError(f"unknown material {args.template!r}; available: {', '.join(available)}")
+    template = available[args.template]
     check_size(args.size)
     values = dict(parse_param(template["params"], raw, args.template) for raw in args.param)
 
-    graph = json.loads((ROOT / template["file"]).read_text())
+    graph = json.loads(template["path"].read_text())
     if "seed" in values:
         reseed(graph, values["seed"])
     apply_params(graph, template["params"], {k: v for k, v in values.items() if k != "seed"})
 
     output = args.output.resolve()
     ptex = write_graph(graph, output, "material")
-    result = export(ptex, output, args.size)
+    result = export(ptex, output, args.size, constant_orm(graph))
     return {"template": args.template, "parameters": values, "ptex": str(ptex), **result}
 
 
@@ -233,10 +357,20 @@ def main():
     parser = argparse.ArgumentParser(prog="mm-material", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("list", help="show templates and their parameters")
+    sub.add_parser("list", help="show local materials and their parameters")
 
-    gen = sub.add_parser("generate", help="export a template as albedo, normal, and ORM maps")
-    gen.add_argument("template")
+    search = sub.add_parser("search", help="search materials on materialmaker.org")
+    search.add_argument("query", nargs="*", help="words that must all appear in name, tags, description, or author")
+    search.add_argument("--license", choices=("CC0", "CC-BY", "CC-BY-SA"))
+    search.add_argument("--limit", type=int, default=20)
+
+    dl = sub.add_parser("download", help="download a materialmaker.org material into materials/")
+    dl.add_argument("id", type=int)
+    dl.add_argument("--name", help="local material name (default: derived from the website name)")
+    dl.add_argument("--force", action="store_true", help="replace a different download with the same name")
+
+    gen = sub.add_parser("generate", help="export a material as albedo, normal, and ORM maps")
+    gen.add_argument("template", metavar="material")
     gen.add_argument("--output", type=Path, required=True)
     gen.add_argument("--size", type=int, default=1024)
     gen.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
@@ -249,7 +383,13 @@ def main():
     hs.add_argument("--param", action="append", default=[], metavar="NAME=VALUE")
 
     args = parser.parse_args()
-    handler = {"list": cmd_list, "generate": cmd_generate, "convert-hotspot": cmd_convert_hotspot}[args.command]
+    handler = {
+        "list": cmd_list,
+        "search": cmd_search,
+        "download": cmd_download,
+        "generate": cmd_generate,
+        "convert-hotspot": cmd_convert_hotspot,
+    }[args.command]
     try:
         print(json.dumps(handler(args), indent=2))
     except CliError as e:

@@ -70,7 +70,7 @@
 			"parameters": {
 				"clamp": false,
 				"fix_ar": false,
-				"image": "%PROJECT_PATH%/hotspot_uv.png"
+				"image": "%PROJECT_PATH%/layout.png"
 			},
 			"seed_int": 0,
 			"type": "image"
