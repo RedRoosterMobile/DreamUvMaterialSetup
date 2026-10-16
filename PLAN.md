@@ -39,7 +39,7 @@ The first version uses curated source-material `.ptex` templates and the supplie
 - Arbitrary text-to-node-graph generation
 - Downloading materials from materialmaker.org
 - Creating or UV-mapping meshes
-- DreamUV automation
+- DreamUV automation as a CLI or MCP command (the Blender step is scripted in `blender_hotspot.py` and validated through Blender MCP, but is not part of `mm-material`)
 - glTF/GLB export
 - Godot, Blender, Unity, or Unreal project integration
 - A separate daemon or database
@@ -113,7 +113,8 @@ Known local constraints:
 
 - Input paths must be absolute because the app changes its working directory.
 - `--headless` currently crashes during export on this Mac; run with the normal renderer.
-- Material Maker 1.7's `--size` argument appears to be ignored; patch the Material node's `size` parameter before export instead.
+- Material Maker 1.7 always renders command-line exports at 2048×2048: `src/parse_args.gd` parses `--size` but passes a hardcoded 2048, which also overrides the Material node's `size`. The CLI resamples smaller sizes with `sips`; sizes above 2048 are not supported.
+- The graph-level `seed_int` is not inherited by nodes. The CLI's `seed` parameter sets a derived seed on every unlocked node.
 - The output directory must already exist.
 - Ignore the extra `.tres` file for the texture-only MVP.
 
@@ -142,7 +143,7 @@ The hotspot converter is independent of the source material. It accepts any comp
 
 It outputs atlas-compatible albedo, normal, and ORM maps. No source-material graph needs to contain hotspot logic.
 
-`HOTSPOT_MATERIAL.md` documents how the converter modifies the three channels. DreamUV mapping remains manual and requires a Blender reference layout matching the mask. Despite its filename, `metal02_hotspot.ptex` is only a possible source material, not the converter.
+`HOTSPOT_MATERIAL.md` documents how the converter modifies the three channels. DreamUV mapping uses the reference layout in `hotspot_uv.blend`; `blender_hotspot.py` scripts it inside a running Blender. Despite its filename, `metal02_hotspot.ptex` is only a possible source material, not the converter.
 
 ## Delivery phases
 
@@ -155,7 +156,15 @@ It outputs atlas-compatible albedo, normal, and ORM maps. No source-material gra
 
 The remaining work starts with CLI automation; Python does not need to construct the conversion graph.
 
-### Phase 2 — Automate export and conversion
+### Phase 2 — Automate export and conversion — complete
+
+- [x] `mm-material list`, `generate`, and `convert-hotspot`, in one stdlib-only Python script.
+- [x] Templates `metal-scratched` (`metal02_hotspot.ptex`) and `metal-noise` (`devil_metal.ptex`), plus `seed` on both.
+- [x] Sizes 256, 512, 1024, and 2048.
+- [x] Converting the `devil/` maps reproduces `devil/hotspot/` byte for byte.
+- [x] `check.sh` runs both commands at 256×256.
+
+Original tasks:
 
 - Implement `convert-hotspot` by patching only the converter's image paths and resolution.
 - Implement `generate` around one included source-material `.ptex`.
@@ -163,6 +172,14 @@ The remaining work starts with CLI automation; Python does not need to construct
 - Keep one small runnable low-resolution check for each command.
 
 Done when the CLI can export a plain material and convert any supplied compatible texture set into hotspot-atlas maps.
+
+### Blender hotspot mapping — validated
+
+- [x] `blender_hotspot.py` appends the atlas plane from `hotspot_uv.blend`, builds a Principled material from a hotspot texture set, and runs DreamUV Hotspot on a mesh.
+- [x] Run through Blender MCP on Blender 5.2.1 with `devil/hotspot/` and a `convert-hotspot` output, on a cube and on a chamfered, inset test block.
+- [x] DreamUV needed a one-line fix for Blender 5, documented in `HOTSPOT_MATERIAL.md`.
+
+Possible later step: expose it as an `apply-hotspot` MCP tool that delegates to Blender MCP.
 
 ### Phase 3 — MCP wrapper
 
@@ -198,7 +215,6 @@ The MCP server delegates to the CLI and returns its JSON result. It does not dup
 
 ## Inputs still needed
 
-- The matching Blender/DreamUV reference object, needed for later UV mapping but not by the CLI.
 - The first two or three controls desired for the initial source-material template. If unspecified, start with scale, primary color, and roughness where supported.
 
 ## References

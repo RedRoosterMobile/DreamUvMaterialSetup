@@ -19,7 +19,7 @@ Create a reusable panel-texture atlas in Material Maker, map it automatically wi
 - DreamUV Blender add-on with the Hotspot tool
 - Godot 4
 
-> The source workflow used Blender 5.0 because DreamUV did not work with Blender 5.1 at the time. Test newer versions before relying on them.
+> The source workflow used Blender 5.0 because DreamUV did not work with Blender 5.1 at the time. DreamUV works on Blender 5.2.1 after a one-line fix; see [DreamUV on Blender 5.x](#dreamuv-on-blender-5x).
 
 ## Included project assets
 
@@ -195,6 +195,49 @@ Inspect the result and rerun Hotspot on smaller face selections when:
 - The chosen atlas rectangle has the wrong aspect ratio
 - Adjacent faces need to remain one panel
 - Visible stretching occurs
+
+### Scripted via Blender MCP
+
+`blender_hotspot.py` performs this step in a running Blender session. It was validated on 2026-10-16 with Blender 5.2.1 through Blender MCP's `execute_blender_code`:
+
+```python
+import runpy
+hotspot = runpy.run_path("/path/to/material-maker-mcp/blender_hotspot.py")
+hotspot["apply_hotspot"]("MyMesh", "/path/to/out/hotspot-metal")  # albedo.png, normal.png, orm.png
+```
+
+`apply_hotspot` does the following:
+
+1. Appends the subdivided plane from `hotspot_uv.blend` as `HotspotAtlas` (36 panels), hidden in the viewport and render. Later runs reuse it.
+2. Creates a Principled BSDF material from the three maps:
+   - Albedo is multiplied by AO (ORM red).
+   - ORM green is connected to roughness and blue to metallic.
+   - The normal map passes through a Normal Map node. Material Maker exports OpenGL normals, which is also Blender's convention.
+   - The ORM and normal images use the Non-Color color space.
+3. Sets DreamUV atlas slot 1 to that plane and material, and runs `view3d.dreamuv_hotspotter` on the object.
+
+Notes from the validation run:
+
+- The context override must contain only `window`, `area`, and `region`. DreamUV works on a temporary duplicate named `dreamuv_temp`, and also pinning `object` to the target makes its edit-mode calls fail.
+- A failed run leaves `dreamuv_temp` in Edit Mode. The script removes it.
+- A plain cube maps all six faces to the same large square panel because every face has the same proportions. Meshes with chamfers, insets, and elongated faces spread across many panels, and chamfers receive the thin trim strips.
+- Panel choice is partly random, so rerunning gives a different but equally valid layout.
+
+### DreamUV on Blender 5.x
+
+Blender 5 renamed `bpy.ops.mesh.loop_multi_select(ring=False)` to `bpy.ops.mesh.select_edge_loop_multi()`. DreamUV calls the old operator in `DUV_Utils.square_fit` when it cuts ring-shaped islands, such as the frame around an inset face. Without a fix, Hotspot fails on such meshes with `Calling operator "bpy.ops.mesh.loop_multi_select" error, could not be found`. Single-face islands, such as cube faces, are unaffected.
+
+Fix in the installed add-on, `DreamUV-master/DUV_Utils.py` (around line 559):
+
+```python
+# Blender 5 renamed mesh.loop_multi_select(ring=False) to mesh.select_edge_loop_multi
+if "select_edge_loop_multi" in dir(bpy.ops.mesh):
+    bpy.ops.mesh.select_edge_loop_multi()
+else:
+    bpy.ops.mesh.loop_multi_select(ring=False)
+```
+
+Use `dir(bpy.ops.mesh)` for the check. `hasattr(bpy.ops.mesh, ...)` is always true, and `bpy.types` does not list built-in operators. Reinstalling DreamUV removes the fix. Disabling and re-enabling the add-on does not reload the edited file, so restart Blender or `importlib.reload` the `DreamUV-master.DUV_Utils` module. All other operators DreamUV calls still exist in 5.2.1.
 
 ## 9. Paint an optional rust mask
 
